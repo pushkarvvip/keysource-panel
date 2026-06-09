@@ -1,0 +1,9 @@
+bgmi-key-system/
+├── package.json
+├── server.js
+├── database.sqlite (auto)
+├── public/
+│   ├── login.html
+│   ├── admin.html
+│   ├── owner.html (separate owner panel)
+│   └── style.css (embedded)
