@@ -12,28 +12,39 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use(session({
-    secret: 'shree_krishna_mod_secret_key_2025',
+    secret: 'shree_krishna_owner_secret',
     resave: false,
     saveUninitialized: false,
     cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 
-// Database
 const db = new sqlite3.Database('./database.sqlite');
 
-// Create tables
 db.serialize(() => {
+    // Users table: added admin_balance for admins/owner, device_limit (max devices for this user), key_expiry
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
         password TEXT,
         balance INTEGER DEFAULT 0,
+        admin_balance INTEGER DEFAULT 0,
         is_admin INTEGER DEFAULT 0,
         is_owner INTEGER DEFAULT 0,
-        device_id TEXT,
+        device_limit INTEGER DEFAULT 1,
+        key_expiry DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // Devices table to track bound devices per user
+    db.run(`CREATE TABLE IF NOT EXISTS user_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        device_id TEXT UNIQUE,
+        last_login DATETIME,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )`);
+
+    // Keys table
     db.run(`CREATE TABLE IF NOT EXISTS keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key_code TEXT UNIQUE,
@@ -43,11 +54,11 @@ db.serialize(() => {
         expiry_days INTEGER,
         is_used INTEGER DEFAULT 0,
         used_by_user_id INTEGER,
-        used_device_id TEXT,
         used_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // Key logs
     db.run(`CREATE TABLE IF NOT EXISTS key_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key_code TEXT,
@@ -62,53 +73,69 @@ db.serialize(() => {
 db.get("SELECT * FROM users WHERE is_owner = 1", async (err, row) => {
     if (!row) {
         const hashed = await bcrypt.hash("8788296319", 10);
-        db.run("INSERT INTO users (username, password, balance, is_admin, is_owner) VALUES (?, ?, ?, ?, ?)",
-            ["pushkar2006", hashed, 999999, 1, 1]);
-        console.log("Owner created: pushkar2006 / 8788296319");
+        db.run(`INSERT INTO users (username, password, balance, admin_balance, is_admin, is_owner, device_limit)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            ["pushkar2006", hashed, 999999, 999999, 1, 1, 100]);
+        console.log("✅ Owner created: pushkar2006 / 8788296319");
     }
 });
 
-// Helper to check owner session
-function isOwner(req, res, next) {
-    if (req.session.userId && req.session.isOwner) return next();
-    res.status(403).json({ error: "Owner access only" });
+// Middleware
+function isAuthenticated(req, res, next) {
+    if (req.session.userId) return next();
+    res.status(401).json({ error: "Not logged in" });
 }
 function isAdmin(req, res, next) {
     if (req.session.userId && (req.session.isAdmin || req.session.isOwner)) return next();
-    res.status(403).json({ error: "Admin access only" });
+    res.status(403).json({ error: "Admin only" });
+}
+function isOwner(req, res, next) {
+    if (req.session.userId && req.session.isOwner) return next();
+    res.status(403).json({ error: "Owner only" });
 }
 
 // ---------- AUTH ROUTES ----------
 app.post('/api/login', async (req, res) => {
     const { username, password, deviceId } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Missing credentials" });
-    if (!deviceId) return res.status(400).json({ error: "Device ID missing" });
+    if (!username || !password || !deviceId) return res.status(400).json({ error: "Missing credentials or device ID" });
 
     db.get("SELECT * FROM users WHERE username = ?", [username], async (err, user) => {
         if (err || !user) return res.status(401).json({ error: "Invalid username/password" });
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(401).json({ error: "Invalid username/password" });
 
-        // Device check (if device already bound to another user)
-        if (user.device_id && user.device_id !== deviceId) {
-            return res.status(403).json({ error: "Device not authorized. Contact admin." });
-        }
-        // Bind device if not set
-        if (!user.device_id) {
-            db.run("UPDATE users SET device_id = ? WHERE id = ?", [deviceId, user.id]);
+        // Check device limit
+        db.all("SELECT device_id FROM user_devices WHERE user_id = ?", [user.id], (err, devices) => {
+            const currentDeviceCount = devices.length;
+            const isDeviceBound = devices.some(d => d.device_id === deviceId);
+            if (!isDeviceBound && currentDeviceCount >= user.device_limit) {
+                return res.status(403).json({ error: `Device limit reached (${user.device_limit}). Contact admin.` });
+            }
+            if (!isDeviceBound) {
+                db.run("INSERT INTO user_devices (user_id, device_id, last_login) VALUES (?, ?, CURRENT_TIMESTAMP)", [user.id, deviceId]);
+            } else {
+                db.run("UPDATE user_devices SET last_login = CURRENT_TIMESTAMP WHERE user_id = ? AND device_id = ?", [user.id, deviceId]);
+            }
+        });
+
+        // Check key expiry
+        if (user.key_expiry && new Date(user.key_expiry) < new Date()) {
+            return res.status(403).json({ error: "Your key has expired. Please contact admin." });
         }
 
         req.session.userId = user.id;
         req.session.username = user.username;
         req.session.isAdmin = user.is_admin === 1;
         req.session.isOwner = user.is_owner === 1;
-        req.session.balance = user.balance;
+        req.session.adminBalance = user.admin_balance;
 
         res.json({
             success: true,
             isAdmin: req.session.isAdmin,
             isOwner: req.session.isOwner,
             balance: user.balance,
+            deviceLimit: user.device_limit,
+            keyExpiry: user.key_expiry,
             message: "Login successful"
         });
     });
@@ -119,41 +146,32 @@ app.post('/api/register', async (req, res) => {
     if (!username || !password || !deviceId) return res.status(400).json({ error: "Missing fields" });
     if (password.length < 4) return res.status(400).json({ error: "Password min 4 chars" });
 
-    // Check if device already used?
-    db.get("SELECT id FROM users WHERE device_id = ?", [deviceId], (err, existing) => {
-        if (existing) return res.status(400).json({ error: "This device already registered" });
-    });
+    // Validate key
+    db.get("SELECT * FROM keys WHERE key_code = ? AND is_used = 0", [keyCode], async (err, key) => {
+        if (err || !key) return res.status(400).json({ error: "Invalid or already used key" });
 
-    // If keyCode provided, validate it
-    let balanceToAdd = 0;
-    let deviceLimit = 1;
-    let expiryDate = null;
-    if (keyCode) {
-        db.get("SELECT * FROM keys WHERE key_code = ? AND is_used = 0", [keyCode], async (err, key) => {
-            if (err || !key) return res.status(400).json({ error: "Invalid or used key" });
-            balanceToAdd = key.balance_amount;
-            deviceLimit = key.device_limit;
-            if (key.expiry_days) {
-                expiryDate = new Date();
-                expiryDate.setDate(expiryDate.getDate() + key.expiry_days);
-            }
-            // Hash password and create user
-            const hashed = await bcrypt.hash(password, 10);
-            db.run("INSERT INTO users (username, password, balance, device_id) VALUES (?, ?, ?, ?)",
-                [username, hashed, balanceToAdd, deviceId], function(err) {
-                if (err) return res.status(400).json({ error: "Username exists" });
-                // Mark key as used
-                db.run("UPDATE keys SET is_used = 1, used_by_user_id = ?, used_device_id = ?, used_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    [this.lastID, deviceId, key.id]);
-                db.run("INSERT INTO key_logs (key_code, action, user_id, details) VALUES (?, ?, ?, ?)",
-                    [keyCode, "used", this.lastID, `Balance: ${balanceToAdd}`]);
-                res.json({ success: true, message: "Account created with key!" });
-            });
+        const hashed = await bcrypt.hash(password, 10);
+        let expiryDate = null;
+        if (key.expiry_days) {
+            expiryDate = new Date();
+            expiryDate.setDate(expiryDate.getDate() + key.expiry_days);
+        }
+
+        db.run(`INSERT INTO users (username, password, balance, device_limit, key_expiry)
+                VALUES (?, ?, ?, ?, ?)`,
+            [username, hashed, key.balance_amount, key.device_limit, expiryDate], function(err) {
+            if (err) return res.status(400).json({ error: "Username exists" });
+
+            const userId = this.lastID;
+            // Bind device
+            db.run("INSERT INTO user_devices (user_id, device_id) VALUES (?, ?)", [userId, deviceId]);
+            // Mark key as used
+            db.run("UPDATE keys SET is_used = 1, used_by_user_id = ?, used_at = CURRENT_TIMESTAMP WHERE id = ?", [userId, key.id]);
+            db.run("INSERT INTO key_logs (key_code, action, user_id, details) VALUES (?, ?, ?, ?)",
+                [keyCode, "used", userId, `Balance +${key.balance_amount}, Device limit ${key.device_limit}`]);
+            res.json({ success: true, message: "Account created! Please login." });
         });
-    } else {
-        // Registration without key – requires admin creation normally, but we block unless admin made account first
-        return res.status(400).json({ error: "Registration requires a valid key code. Get one from admin." });
-    }
+    });
 });
 
 app.get('/api/me', (req, res) => {
@@ -163,7 +181,7 @@ app.get('/api/me', (req, res) => {
             username: req.session.username,
             isAdmin: req.session.isAdmin,
             isOwner: req.session.isOwner,
-            balance: req.session.balance
+            adminBalance: req.session.adminBalance
         });
     } else {
         res.json({ loggedIn: false });
@@ -175,25 +193,39 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// ---------- ADMIN / OWNER KEY MANAGEMENT ----------
-// Generate random key
+// ---------- OWNER/ADMIN KEY MANAGEMENT ----------
+// Generate key (deducts from admin's balance)
 app.post('/api/admin/generate-key', isAdmin, async (req, res) => {
     const { balance_amount, device_limit, expiry_days, quantity = 1 } = req.body;
-    if (!balance_amount) return res.status(400).json({ error: "Balance amount required" });
-    const keys = [];
-    for (let i = 0; i < quantity; i++) {
-        const keyCode = crypto.randomBytes(12).toString('hex').toUpperCase();
-        keys.push(keyCode);
-        db.run(`INSERT INTO keys (key_code, created_by, balance_amount, device_limit, expiry_days)
-                VALUES (?, ?, ?, ?, ?)`,
-            [keyCode, req.session.userId, balance_amount, device_limit || 1, expiry_days || null]);
-        db.run("INSERT INTO key_logs (key_code, action, user_id, details) VALUES (?, ?, ?, ?)",
-            [keyCode, "generated", req.session.userId, `Balance: ${balance_amount}, Limit: ${device_limit}`]);
-    }
-    res.json({ success: true, keys });
+    if (!balance_amount || balance_amount <= 0) return res.status(400).json({ error: "Valid balance amount required" });
+    const requiredBalance = balance_amount * quantity;
+
+    // Check admin balance
+    db.get("SELECT admin_balance FROM users WHERE id = ?", [req.session.userId], (err, row) => {
+        if (err || row.admin_balance < requiredBalance) {
+            return res.status(400).json({ error: `Insufficient admin balance. Need ${requiredBalance}, have ${row.admin_balance}` });
+        }
+
+        const keys = [];
+        const keyCodes = [];
+        for (let i = 0; i < quantity; i++) {
+            const keyCode = crypto.randomBytes(12).toString('hex').toUpperCase();
+            keyCodes.push(keyCode);
+            db.run(`INSERT INTO keys (key_code, created_by, balance_amount, device_limit, expiry_days)
+                    VALUES (?, ?, ?, ?, ?)`,
+                [keyCode, req.session.userId, balance_amount, device_limit || 1, expiry_days || null]);
+            keys.push(keyCode);
+            db.run("INSERT INTO key_logs (key_code, action, user_id, details) VALUES (?, ?, ?, ?)",
+                [keyCode, "generated", req.session.userId, `Balance: ${balance_amount}, Limit: ${device_limit}`]);
+        }
+        // Deduct admin balance
+        db.run("UPDATE users SET admin_balance = admin_balance - ? WHERE id = ?", [requiredBalance, req.session.userId]);
+        if (req.session.userId) req.session.adminBalance -= requiredBalance;
+        res.json({ success: true, keys });
+    });
 });
 
-// Get all keys (admin/owner)
+// Get all keys (with used by username)
 app.get('/api/admin/keys', isAdmin, (req, res) => {
     db.all(`SELECT k.*, u.username as used_by_username FROM keys k
             LEFT JOIN users u ON k.used_by_user_id = u.id
@@ -203,7 +235,7 @@ app.get('/api/admin/keys', isAdmin, (req, res) => {
     });
 });
 
-// Delete key (only if unused)
+// Delete unused key (only if not used)
 app.delete('/api/admin/keys/:id', isAdmin, (req, res) => {
     const id = req.params.id;
     db.get("SELECT is_used FROM keys WHERE id = ?", [id], (err, key) => {
@@ -213,18 +245,20 @@ app.delete('/api/admin/keys/:id', isAdmin, (req, res) => {
     });
 });
 
-// Get all users (admin/owner)
+// ---------- USER MANAGEMENT (Admin & Owner) ----------
 app.get('/api/admin/users', isAdmin, (req, res) => {
-    db.all("SELECT id, username, balance, is_admin, is_owner, device_id, created_at FROM users", (err, rows) => {
+    db.all("SELECT id, username, balance, is_admin, is_owner, device_limit, key_expiry, created_at FROM users", (err, rows) => {
         if (err) return res.status(500).json({ error: "DB error" });
         res.json(rows);
     });
 });
 
-// Create user directly (admin/owner) with custom balance
+// Add user (admin can add normal users, only owner can add admins)
 app.post('/api/admin/users', isAdmin, async (req, res) => {
     const { username, password, balance, is_admin } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Username and password required" });
+    if (is_admin && !req.session.isOwner) return res.status(403).json({ error: "Only owner can create admins" });
+
     const hashed = await bcrypt.hash(password, 10);
     db.run("INSERT INTO users (username, password, balance, is_admin) VALUES (?, ?, ?, ?)",
         [username, hashed, balance || 0, is_admin ? 1 : 0], function(err) {
@@ -233,15 +267,31 @@ app.post('/api/admin/users', isAdmin, async (req, res) => {
     });
 });
 
-// Delete user (admin/owner)
+// Delete user (admin can delete normal users, owner can delete any except self)
 app.delete('/api/admin/users/:id', isAdmin, (req, res) => {
     const id = req.params.id;
     if (id == req.session.userId) return res.status(400).json({ error: "Cannot delete yourself" });
-    db.run("DELETE FROM users WHERE id = ?", [id]);
+    // Only owner can delete admin users
+    db.get("SELECT is_admin FROM users WHERE id = ?", [id], (err, user) => {
+        if (user && user.is_admin && !req.session.isOwner) {
+            return res.status(403).json({ error: "Only owner can delete admins" });
+        }
+        db.run("DELETE FROM users WHERE id = ?", [id]);
+        db.run("DELETE FROM user_devices WHERE user_id = ?", [id]);
+        res.json({ success: true });
+    });
+});
+
+// Reset user password (admin/owner)
+app.post('/api/admin/users/:id/reset-password', isAdmin, async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 4) return res.status(400).json({ error: "Password min 4 chars" });
+    const hashed = await bcrypt.hash(newPassword, 10);
+    db.run("UPDATE users SET password = ? WHERE id = ?", [hashed, req.params.id]);
     res.json({ success: true });
 });
 
-// Update user balance (admin/owner)
+// Update user balance (admin can update any user's balance)
 app.post('/api/admin/users/:id/balance', isAdmin, (req, res) => {
     const { balance } = req.body;
     db.run("UPDATE users SET balance = ? WHERE id = ?", [balance, req.params.id], (err) => {
@@ -250,15 +300,41 @@ app.post('/api/admin/users/:id/balance', isAdmin, (req, res) => {
     });
 });
 
-// ---------- DEVICE ID & TIME API ----------
+// Owner only: add admin balance (replenish)
+app.post('/api/owner/add-admin-balance', isOwner, (req, res) => {
+    const { userId, amount } = req.body;
+    if (!userId || amount <= 0) return res.status(400).json({ error: "Invalid" });
+    db.run("UPDATE users SET admin_balance = admin_balance + ? WHERE id = ?", [amount, userId], (err) => {
+        if (err) return res.status(500).json({ error: "Update failed" });
+        res.json({ success: true });
+    });
+});
+
+// Owner only: promote/demote admin
+app.post('/api/owner/set-admin', isOwner, (req, res) => {
+    const { userId, isAdmin } = req.body;
+    db.get("SELECT is_owner FROM users WHERE id = ?", [userId], (err, user) => {
+        if (user && user.is_owner) return res.status(400).json({ error: "Cannot change owner" });
+        db.run("UPDATE users SET is_admin = ? WHERE id = ?", [isAdmin ? 1 : 0, userId]);
+        res.json({ success: true });
+    });
+});
+
+// Get devices of a user (admin/owner)
+app.get('/api/admin/users/:id/devices', isAdmin, (req, res) => {
+    db.all("SELECT device_id, last_login FROM user_devices WHERE user_id = ?", [req.params.id], (err, rows) => {
+        res.json(rows);
+    });
+});
+
+// ---------- UTILITIES ----------
 app.get('/api/india-time', (req, res) => {
     const now = new Date();
     const indiaTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     res.json({ time: indiaTime.toISOString(), running: "Shree Krishna Mod Active" });
 });
 
-// Start server
 app.listen(PORT, () => {
-    console.log(`✅ Shree Krishna Mod Server on http://localhost:${PORT}`);
-    console.log(`Owner: pushkar2006 / 8788296319`);
+    console.log(`🚀 Shree Krishna Mod Server on http://localhost:${PORT}`);
+    console.log(`👑 Owner: pushkar2006 / 8788296319`);
 });
