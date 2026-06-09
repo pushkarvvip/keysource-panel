@@ -1,0 +1,6 @@
+bgmi-mod-system/
+├── server.js
+├── package.json
+└── public/
+    ├── login.html
+    └── admin.html
