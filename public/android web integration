@@ -1,0 +1,6 @@
+webView.addJavascriptInterface(new Object() {
+    @JavascriptInterface
+    public String getDeviceId() {
+        return Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+    }
+}, "Android");
