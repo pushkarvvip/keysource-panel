@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Shree Krishna Mod - Admin Panel</title>
+    <style>
+        body { background: #0a1f1a; color: #efe; font-family: monospace; padding: 20px; }
+        .container { max-width: 1400px; margin: auto; background: #112a24; border-radius: 28px; padding: 20px; }
+        h1 { color: #ffaa44; border-left: 5px solid #ffaa44; padding-left: 20px; }
+        button, input, select { padding: 8px 15px; margin: 5px; border-radius: 30px; border: none; }
+        button { background: #ff9933; cursor: pointer; font-weight: bold; }
+        .card { background: #1e3a2f; margin: 20px 0; padding: 20px; border-radius: 24px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #2e6b55; }
+        .copy-btn { background: #2c6e5c; color: white; padding: 4px 8px; font-size: 0.8rem; }
+        .delete-btn { background: #aa4433; }
+        .flex { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        .badge { background: #ffaa33; color: #1e3a2f; padding: 2px 8px; border-radius: 30px; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🔱 Shree Krishna Admin Panel <button id="logoutBtn" style="float:right;">Logout</button></h1>
+    <div id="userRole" class="badge"></div>
+
+    <!-- Key Generation -->
+    <div class="card">
+        <h3>✨ Generate New Keys</h3>
+        <div class="flex">
+            <input type="number" id="keyBalance" placeholder="Balance amount" value="1000">
+            <input type="number" id="keyDeviceLimit" placeholder="Device limit" value="1">
+            <input type="number" id="keyExpiryDays" placeholder="Expiry days (0 = never)">
+            <input type="number" id="keyQuantity" placeholder="Quantity" value="1">
+            <button id="genKeysBtn">🔑 Generate Keys</button>
+        </div>
+        <div id="genResult"></div>
+    </div>
+
+    <!-- Keys List -->
+    <div class="card">
+        <h3>📜 Key Records</h3>
+        <table id="keysTable">
+            <thead><tr><th>Key Code</th><th>Balance</th><th>Device Limit</th><th>Expiry Days</th><th>Used</th><th>Used By</th><th>Action</th></tr></thead>
+            <tbody id="keysTableBody"></tbody>
+        </table>
+    </div>
+
+    <!-- Users List -->
+    <div class="card">
+        <h3>👥 Users</h3>
+        <div class="flex">
+            <input type="text" id="newUsername" placeholder="Username">
+            <input type="password" id="newPassword" placeholder="Password">
+            <input type="number" id="newBalance" placeholder="Initial Balance" value="0">
+            <label><input type="checkbox" id="newIsAdmin"> Make Admin</label>
+            <button id="addUserBtn">➕ Add User</button>
+        </div>
+        <table id="usersTable">
+            <thead><tr><th>ID</th><th>Username</th><th>Balance</th><th>Admin</th><th>Device ID</th><th>Actions</th></tr></thead>
+            <tbody id="usersTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let isOwner = false;
+
+    async function fetchData() {
+        // Fetch current user role
+        const me = await fetch('/api/me').then(r => r.json());
+        if (!me.loggedIn) window.location.href = '/login.html';
+        isOwner = me.isOwner;
+        document.getElementById('userRole').innerText = isOwner ? "👑 OWNER MODE" : "🛡️ ADMIN MODE";
+        fetchKeys();
+        fetchUsers();
+    }
+
+    async function fetchKeys() {
+        const res = await fetch('/api/admin/keys');
+        const keys = await res.json();
+        const tbody = document.getElementById('keysTableBody');
+        tbody.innerHTML = '';
+        keys.forEach(k => {
+            const row = tbody.insertRow();
+            row.insertCell(0).innerHTML = `<code>${k.key_code}</code> <button class="copy-btn" data-code="${k.key_code}">Copy</button>`;
+            row.insertCell(1).innerText = k.balance_amount;
+            row.insertCell(2).innerText = k.device_limit;
+            row.insertCell(3).innerText = k.expiry_days || '∞';
+            row.insertCell(4).innerText = k.is_used ? '✅ Used' : '❌ Unused';
+            row.insertCell(5).innerText = k.used_by_username || '-';
+            const action = row.insertCell(6);
+            if (!k.is_used) {
+                const delBtn = document.createElement('button');
+                delBtn.innerText = 'Delete';
+                delBtn.className = 'delete-btn';
+                delBtn.onclick = () => deleteKey(k.id);
+                action.appendChild(delBtn);
+            }
+        });
+        // Attach copy listeners
+        document.querySelectorAll('.copy-btn').forEach(btn => {
+            btn.onclick = () => {
+                const code = btn.getAttribute('data-code');
+                navigator.clipboard.writeText(code);
+                alert('Key copied: ' + code);
+            };
+        });
+    }
+
+    async function deleteKey(id) {
+        if (confirm('Delete key?')) {
+            await fetch(`/api/admin/keys/${id}`, { method: 'DELETE' });
+            fetchKeys();
+        }
+    }
+
+    async function fetchUsers() {
+        const res = await fetch('/api/admin/users');
+        const users = await res.json();
+        const tbody = document.getElementById('usersTableBody');
+        tbody.innerHTML = '';
+        users.forEach(u => {
+            const row = tbody.insertRow();
+            row.insertCell(0).innerText = u.id;
+            row.insertCell(1).innerText = u.username;
+            row.insertCell(2).innerHTML = `<input type="number" value="${u.balance}" id="bal_${u.id}" style="width:80px;"> <button onclick="updateBalance(${u.id})">Save</button>`;
+            row.insertCell(3).innerText = u.is_admin ? 'Admin' : (u.is_owner ? 'Owner' : 'User');
+            row.insertCell(4).innerText = u.device_id || 'Not bound';
+            const action = row.insertCell(5);
+            if (!u.is_owner && u.id != 1) { // prevent deleting owner
+                const delBtn = document.createElement('button');
+                delBtn.innerText = 'Delete';
+                delBtn.className = 'delete-btn';
+                delBtn.onclick = () => deleteUser(u.id);
+                action.appendChild(delBtn);
+            }
+        });
+    }
+
+    async function updateBalance(userId) {
+        const newBalance = document.getElementById(`bal_${userId}`).value;
+        await fetch(`/api/admin/users/${userId}/balance`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ balance: parseInt(newBalance) })
+        });
+        alert('Balance updated');
+        fetchUsers();
+    }
+
+    async function deleteUser(id) {
+        if (confirm('Delete user?')) {
+            await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+            fetchUsers();
+        }
+    }
+
+    document.getElementById('genKeysBtn').onclick = async () => {
+        const balance = parseInt(document.getElementById('keyBalance').value);
+        const device_limit = parseInt(document.getElementById('keyDeviceLimit').value);
+        const expiry_days = parseInt(document.getElementById('keyExpiryDays').value) || null;
+        const quantity = parseInt(document.getElementById('keyQuantity').value) || 1;
+        const res = await fetch('/api/admin/generate-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ balance_amount: balance, device_limit, expiry_days, quantity })
+        });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('genResult').innerHTML = `<div class="success">✅ Generated keys: ${data.keys.join(', ')}</div>`;
+            fetchKeys();
+        } else {
+            alert('Error');
+        }
+    };
+
+    document.getElementById('addUserBtn').onclick = async () => {
+        const username = document.getElementById('newUsername').value;
+        const password = document.getElementById('newPassword').value;
+        const balance = parseInt(document.getElementById('newBalance').value);
+        const isAdmin = document.getElementById('newIsAdmin').checked;
+        if (!username || !password) return alert('Fill all');
+        const res = await fetch('/api/admin/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, balance, is_admin: isAdmin })
+        });
+        if (res.ok) {
+            alert('User added');
+            fetchUsers();
+            document.getElementById('newUsername').value = '';
+            document.getElementById('newPassword').value = '';
+        } else {
+            alert('Error: username exists');
+        }
+    };
+
+    document.getElementById('logoutBtn').onclick = async () => {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/login.html';
+    };
+
+    fetchData();
+</script>
+</body>
+</html>
