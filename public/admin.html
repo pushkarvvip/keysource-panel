@@ -23,6 +23,16 @@
     <h1>🔱 Shree Krishna Admin Panel <button id="logoutBtn" style="float:right;">Logout</button></h1>
     <div id="userRole" class="badge"></div>
 
+    <div id="ownerSection" class="card" style="display:none;">
+        <h3>👑 Owner Actions</h3>
+        <div class="flex">
+            <input type="text" id="adminUsername" placeholder="Admin username">
+            <input type="password" id="adminPassword" placeholder="Password">
+            <input type="number" id="adminBalance" placeholder="Admin balance" value="10000">
+            <button id="createAdminBtn">➕ Create Admin</button>
+        </div>
+    </div>
+
     <!-- Key Generation -->
     <div class="card">
         <h3>✨ Generate New Keys</h3>
@@ -52,7 +62,6 @@
             <input type="text" id="newUsername" placeholder="Username">
             <input type="password" id="newPassword" placeholder="Password">
             <input type="number" id="newBalance" placeholder="Initial Balance" value="0">
-            <label><input type="checkbox" id="newIsAdmin"> Make Admin</label>
             <button id="addUserBtn">➕ Add User</button>
         </div>
         <table id="usersTable">
@@ -71,9 +80,33 @@
         if (!me.loggedIn) window.location.href = '/login.html';
         isOwner = me.isOwner;
         document.getElementById('userRole').innerText = isOwner ? "👑 OWNER MODE" : "🛡️ ADMIN MODE";
+        document.getElementById('ownerSection').style.display = isOwner ? 'block' : 'none';
         fetchKeys();
         fetchUsers();
     }
+
+    document.getElementById('createAdminBtn').onclick = async () => {
+        const username = document.getElementById('adminUsername').value;
+        const password = document.getElementById('adminPassword').value;
+        const balance = parseInt(document.getElementById('adminBalance').value) || 0;
+        if (!username || !password) return alert('Fill all');
+
+        const res = await fetch('/api/admin/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, balance, is_admin: true })
+        });
+
+        if (res.ok) {
+            alert('Admin added');
+            fetchUsers();
+            document.getElementById('adminUsername').value = '';
+            document.getElementById('adminPassword').value = '';
+        } else {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || 'Error');
+        }
+    };
 
     async function fetchKeys() {
         const res = await fetch('/api/admin/keys');
@@ -178,12 +211,11 @@
         const username = document.getElementById('newUsername').value;
         const password = document.getElementById('newPassword').value;
         const balance = parseInt(document.getElementById('newBalance').value);
-        const isAdmin = document.getElementById('newIsAdmin').checked;
         if (!username || !password) return alert('Fill all');
         const res = await fetch('/api/admin/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password, balance, is_admin: isAdmin })
+            body: JSON.stringify({ username, password, balance, is_admin: false })
         });
         if (res.ok) {
             alert('User added');

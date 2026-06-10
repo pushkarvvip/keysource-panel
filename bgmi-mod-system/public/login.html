@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Shree Krishna Mod - Login</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; font-family:'Poppins',sans-serif; }
+    body {
+      background: linear-gradient(145deg, #0a2f2a, #051a15);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .glass {
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(12px);
+      border-radius: 48px;
+      padding: 30px;
+      width: 100%;
+      max-width: 450px;
+      border: 1px solid #ffcc88;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    h1 {
+      text-align: center;
+      color: #ffaa44;
+      font-size: 2rem;
+      letter-spacing: 2px;
+      text-shadow: 0 0 5px #ff6600;
+    }
+    .sub {
+      text-align: center;
+      color: #ffeecc;
+      margin-bottom: 20px;
+      font-size: 0.8rem;
+    }
+    .time-card {
+      background: #1e3a2f;
+      border-radius: 30px;
+      padding: 10px;
+      text-align: center;
+      margin-bottom: 20px;
+      color: #ffdd99;
+      font-weight: bold;
+    }
+    input, button {
+      width: 100%;
+      padding: 14px;
+      margin: 8px 0;
+      border-radius: 50px;
+      border: none;
+      outline: none;
+      font-size: 1rem;
+    }
+    input {
+      background: #2c5244;
+      color: white;
+      padding-left: 20px;
+    }
+    input::placeholder { color: #bbccaa; }
+    button {
+      background: #ff8800;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    button:hover { background: #ffaa33; transform: scale(1.02); }
+    .toggle {
+      text-align: center;
+      margin-top: 15px;
+      color: #ccc;
+    }
+    .toggle a {
+      color: #ffaa66;
+      text-decoration: none;
+    }
+    .message {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 30px;
+      text-align: center;
+    }
+    .error { background: #aa3333aa; color: #ffcccc; }
+    .success { background: #33aa33aa; color: #ccffcc; }
+  </style>
+</head>
+<body>
+<div class="glass">
+  <h1>🚩 SHREE KRISHNA MOD</h1>
+  <div class="sub">BGMI Premium Experience</div>
+  <div class="time-card">
+    <span>🕉️ India Time: </span><span id="indiaTime">Ready</span>
+  </div>
+
+  <div id="loginDiv">
+    <form id="loginForm" autocomplete="on">
+      <input type="text" id="loginUsername" placeholder="Username" autocomplete="username">
+      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
+      <button id="loginBtn" type="submit">🔓 LOGIN</button>
+    </form>
+    <div class="toggle">New here? <a href="#" id="showKeyRegister">Use a Key to Register</a></div>
+  </div>
+
+  <div id="keyRegisterDiv" style="display:none;">
+    <input type="text" id="regUsername" placeholder="Choose username" autocomplete="username">
+    <input type="password" id="regPassword" placeholder="Password (min 4 chars)" autocomplete="new-password">
+    <input type="text" id="regKeyCode" placeholder="Enter Key Code from Admin" autocomplete="one-time-code">
+    <button id="registerWithKeyBtn">🎫 REGISTER WITH KEY</button>
+    <div class="toggle"><a href="#" id="showLoginDiv">Back to Login</a></div>
+  </div>
+
+  <div id="message" class="message" style="display:none;"></div>
+</div>
+
+<script>
+  let deviceId = "UNKNOWN";
+
+  // Get device ID from Android WebView (if available)
+  if (typeof Android !== 'undefined' && Android.getDeviceId) {
+    deviceId = Android.getDeviceId();
+  } else {
+    // Fallback for web testing
+    deviceId = localStorage.getItem("device_id");
+    if (!deviceId) {
+      deviceId = "web_" + Math.random().toString(36).substr(2, 10);
+      localStorage.setItem("device_id", deviceId);
+    }
+    console.warn("Using fallback device ID:", deviceId);
+  }
+
+  document.getElementById('indiaTime').innerText = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  }).format(new Date());
+
+  function showMessage(msg, isError = true) {
+    const msgDiv = document.getElementById('message');
+    msgDiv.innerText = msg;
+    msgDiv.className = `message ${isError ? 'error' : 'success'}`;
+    msgDiv.style.display = 'block';
+    setTimeout(() => msgDiv.style.display = 'none', 4000);
+  }
+
+  async function apiCall(endpoint, data) {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const json = await res.json();
+    return { status: res.status, data: json };
+  }
+
+  // LOGIN
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    if (!username || !password) return showMessage("Enter username & password");
+    const res = await apiCall('/api/login', { username, password, deviceId });
+    if (res.data.success) {
+      if (res.data.isOwner) {
+        window.location.replace('/admin');
+      } else if (res.data.isAdmin) {
+        window.location.replace('/admin');
+      } else {
+        showMessage(`Welcome ${username}! Balance: ${res.data.balance}`, false);
+      }
+    } else {
+      showMessage(res.data.error || "Login failed");
+    }
+  });
+
+  // REGISTER WITH KEY
+  document.getElementById('registerWithKeyBtn').onclick = async () => {
+    const username = document.getElementById('regUsername').value.trim();
+    const password = document.getElementById('regPassword').value;
+    const keyCode = document.getElementById('regKeyCode').value.trim();
+    if (!username || !password || !keyCode) return showMessage("All fields required");
+    if (password.length < 4) return showMessage("Password min 4 chars");
+    const res = await apiCall('/api/register', { username, password, deviceId, keyCode });
+    if (res.data.success) {
+      showMessage("Account created! Please login.", false);
+      document.getElementById('showLoginDiv').click();
+    } else {
+      showMessage(res.data.error);
+    }
+  };
+
+  document.getElementById('showKeyRegister').onclick = (e) => {
+    e.preventDefault();
+    document.getElementById('loginDiv').style.display = 'none';
+    document.getElementById('keyRegisterDiv').style.display = 'block';
+  };
+  document.getElementById('showLoginDiv').onclick = (e) => {
+    e.preventDefault();
+    document.getElementById('keyRegisterDiv').style.display = 'none';
+    document.getElementById('loginDiv').style.display = 'block';
+  };
+</script>
+</body>
+</html>
