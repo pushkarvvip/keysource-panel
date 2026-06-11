@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Shree Krishna Mod - Login</title>
     <style>
         * { margin:0; padding:0; box-sizing:border-box; font-family:'Poppins',sans-serif; }
@@ -15,7 +15,7 @@
             padding: 20px;
         }
         .glass {
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.75);
             backdrop-filter: blur(12px);
             border-radius: 48px;
             padding: 30px;
@@ -27,7 +27,7 @@
         h1 {
             text-align: center;
             color: #ffaa44;
-            font-size: 2.2rem;
+            font-size: 2rem;
             letter-spacing: 2px;
             text-shadow: 0 0 5px #ff6600;
         }
@@ -116,8 +116,8 @@
 
     <div id="keyRegisterDiv" style="display:none;">
         <input type="text" id="regUsername" placeholder="Choose username">
-        <input type="password" id="regPassword" placeholder="Password">
-        <input type="text" id="regKeyCode" placeholder="Enter Key Code (from admin)">
+        <input type="password" id="regPassword" placeholder="Password (min 4 chars)">
+        <input type="text" id="regKeyCode" placeholder="Enter Key Code from Admin">
         <button id="registerWithKeyBtn">🎫 REGISTER WITH KEY</button>
         <div class="toggle"><a href="#" id="showLoginDiv">Back to Login</a></div>
     </div>
@@ -130,11 +130,11 @@
     let deviceId = "UNKNOWN";
     let startTime = Date.now();
 
-    // Get device ID from Android WebView interface (if available)
+    // Get device ID from Android WebView (if available)
     if (typeof Android !== 'undefined' && Android.getDeviceId) {
         deviceId = Android.getDeviceId();
     } else {
-        // Fallback: generate a random ID for web testing
+        // Fallback for web testing
         deviceId = localStorage.getItem("device_id");
         if (!deviceId) {
             deviceId = "web_" + Math.random().toString(36).substr(2, 10);
@@ -143,7 +143,7 @@
         console.warn("Using fallback device ID:", deviceId);
     }
 
-    // India time & running time updater
+    // India time & running time
     function updateTimes() {
         fetch('/api/india-time')
             .then(res => res.json())
@@ -192,11 +192,10 @@
         const res = await apiCall('/api/login', { username, password, deviceId });
         if (res.data.success) {
             showMessage(`Welcome ${username}! Balance: ${res.data.balance}`, false);
-            // In BGMI mod, you would close WebView and pass session token
             if (res.data.isAdmin) {
                 setTimeout(() => window.location.href = '/admin', 1500);
             } else {
-                setTimeout(() => alert("Login success! You may now play."), 1000);
+                setTimeout(() => alert("Login success! You may now play BGMI."), 1000);
             }
         } else {
             showMessage(res.data.error || "Login failed");
