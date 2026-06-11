@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shree Krishna Mod - Admin Panel</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #0a1f1a; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; color: #eef; }
+    .container { max-width: 1400px; margin: auto; background: #112a24; border-radius: 28px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    h1 { color: #ffaa44; border-left: 5px solid #ffaa44; padding-left: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .card { background: #1e3a2f; margin: 20px 0; padding: 20px; border-radius: 24px; }
+    .flex { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 15px; }
+    input, select, button { padding: 10px 16px; border-radius: 40px; border: none; font-size: 0.9rem; }
+    input, select { background: #2c5a4a; color: white; }
+    button { background: #ff9933; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #ffbb55; transform: scale(1.02); }
+    .danger-btn { background: #c0392b; color: white; }
+    .success { background: #2e7d64; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; overflow-x: auto; display: block; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #2e6b55; }
+    th { background: #0f2a22; color: #ffcc88; }
+    .copy-btn { background: #2c6e5c; padding: 4px 10px; font-size: 0.7rem; margin-left: 5px; }
+    .badge { background: #ffaa33; color: #1e3a2f; padding: 4px 12px; border-radius: 30px; font-weight: bold; display: inline-block; }
+    .code { font-family: monospace; background: #00000066; padding: 2px 6px; border-radius: 12px; }
+    .owner-note { background: #aa8833; color: #1e2a1a; padding: 6px 12px; border-radius: 30px; margin-bottom: 10px; font-weight: bold; }
+    @media (max-width: 700px) { th, td { font-size: 12px; } .flex { flex-direction: column; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🔱 Shree Krishna Mod Control
+    <button id="logoutBtn" style="background:#555;">Logout</button>
+  </h1>
+  <div id="roleBadge" class="badge">Loading...</div>
+
+  <!-- Owner only section -->
+  <div id="ownerSection" style="display:none;">
+    <div class="card">
+      <h3>👑 Owner Actions</h3>
+      <div class="flex">
+        <input type="text" id="adminUsername" placeholder="Admin username">
+        <input type="password" id="adminPassword" placeholder="Password">
+        <input type="number" id="adminBalance" placeholder="Admin balance" value="10000">
+        <button id="createAdminBtn">➕ Create Admin</button>
+      </div>
+      <div class="flex">
+        <select id="existingAdminSelect"></select>
+        <input type="number" id="replenishAmount" placeholder="Add balance">
+        <button id="replenishAdminBtn">💰 Replenish Admin Balance</button>
+        <button id="removeAdminBtn" class="danger-btn">❌ Demote Admin</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key Generation -->
+  <div class="card">
+    <h3>✨ Generate Keys</h3>
+    <div id="keyGenNote"></div>
+    <div class="flex">
+      <input type="number" id="keyBalance" placeholder="Balance amount" value="1000">
+      <input type="number" id="keyDeviceLimit" placeholder="Device limit" value="1">
+      <input type="number" id="keyExpiryDays" placeholder="Expiry days (0 = never)">
+      <input type="number" id="keyQuantity" placeholder="Quantity" value="1">
+      <button id="genKeysBtn">🔑 Generate Keys</button>
+    </div>
+    <div id="genResult" style="margin-top:10px;"></div>
+    <div>💰 Your Admin Balance: <strong id="myAdminBalance">0</strong></div>
+  </div>
+
+  <!-- Key Records -->
+  <div class="card">
+    <h3>📜 Key Records (Day & Device Limit)</h3>
+    <div style="overflow-x: auto;">
+      <table id="keysTable">
+          <thead><tr><th>Key Code</th><th>Balance</th><th>Device Limit</th><th>Expiry Days</th><th>Status</th><th>Used By</th><th>Created At (Day)</th><th>Action</th></tr></thead>
+        <tbody id="keysTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- User Management -->
+  <div class="card">
+    <h3>👥 User Management</h3>
+    <div class="flex">
+      <input type="text" id="newUsername" placeholder="Username">
+      <input type="password" id="newPassword" placeholder="Password">
+      <input type="number" id="newBalance" placeholder="Initial Balance" value="0">
+        <label id="newIsAdminWrap"><input type="checkbox" id="newIsAdmin"> Make Admin (owner only)</label>
+      <button id="addUserBtn">➕ Add User</button>
+    </div>
+    <div style="overflow-x: auto;">
+      <table id="usersTable">
+        <thead><tr><th>ID</th><th>Username</th><th>Balance</th><th>Device Limit</th><th>Key Expiry</th><th>Admin</th><th>Actions</th></tr></thead>
+        <tbody id="usersTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentUserRole = { isAdmin: false, isOwner: false };
+  let myAdminBalance = 0;
+
+  async function fetchMe() {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (!data.loggedIn) window.location.href = '/login.html';
+    currentUserRole = { isAdmin: data.isAdmin, isOwner: data.isOwner };
+    myAdminBalance = data.adminBalance || 0;
+    document.getElementById('myAdminBalance').innerText = myAdminBalance;
+    document.getElementById('roleBadge').innerText = data.isOwner ? "👑 OWNER MODE" : "🛡️ ADMIN MODE";
+    document.getElementById('newIsAdminWrap').style.display = data.isOwner ? 'inline-flex' : 'none';
+    document.getElementById('newIsAdmin').checked = false;
+        
+    if (data.isOwner) {
+      document.getElementById('ownerSection').style.display = 'block';
+      document.getElementById('keyGenNote').innerHTML = '<div class="owner-note">👑 Owner mode: Key generation uses unlimited balance (no deduction).</div>';
+      loadAdminsForOwner();
+    } else {
+      document.getElementById('ownerSection').style.display = 'none';
+      document.getElementById('keyGenNote').innerHTML = '<div class="owner-note">🔑 Admins: Key generation deducts from your admin balance.</div>';
+    }
+  }
+
+  async function loadAdminsForOwner() {
+    const res = await fetch('/api/admin/users');
+    const users = await res.json();
+    const adminSelect = document.getElementById('existingAdminSelect');
+    adminSelect.innerHTML = '<option value="">-- Select Admin --</option>';
+    users.forEach(u => {
+      if (u.is_admin && !u.is_owner) {
+        const option = document.createElement('option');
+        option.value = u.id;
+        option.textContent = `${u.username} (Balance: ${u.admin_balance || 0})`;
+        adminSelect.appendChild(option);
+      }
+    });
+  }
+
+  // Keys
+  async function fetchKeys() {
+    const res = await fetch('/api/admin/keys');
+    const keys = await res.json();
+    const tbody = document.getElementById('keysTableBody');
+    tbody.innerHTML = '';
+    keys.forEach(k => {
+      const row = tbody.insertRow();
+      row.insertCell(0).innerHTML = `<span class="code">${k.key_code}</span> <button class="copy-btn" data-code="${k.key_code}">Copy</button>`;
+      row.insertCell(1).innerText = k.balance_amount;
+      row.insertCell(2).innerText = k.device_limit;
+      row.insertCell(3).innerText = k.expiry_days || '∞';
+      row.insertCell(4).innerText = k.blocked ? '⛔ Blocked' : (k.is_used ? '✅ Used' : '❌ Unused');
+      row.insertCell(5).innerText = k.used_by_username || '-';
+      row.insertCell(6).innerText = new Date(k.created_at).toLocaleDateString('en-IN');
+      const action = row.insertCell(7);
+      const resetBtn = document.createElement('button');
+      resetBtn.innerText = 'Reset Key';
+      resetBtn.onclick = () => resetKey(k.id);
+      action.appendChild(resetBtn);
+
+      const blockBtn = document.createElement('button');
+      blockBtn.innerText = 'Block Key';
+      blockBtn.className = 'danger-btn';
+      blockBtn.onclick = () => blockKey(k.id);
+      action.appendChild(blockBtn);
+
+      if (!k.is_used && !k.blocked) {
+        const delBtn = document.createElement('button');
+        delBtn.innerText = 'Delete';
+        delBtn.className = 'danger-btn';
+        delBtn.onclick = () => deleteKey(k.id);
+        action.appendChild(delBtn);
+      }
+    });
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.onclick = () => {
+        const code = btn.getAttribute('data-code');
+        navigator.clipboard.writeText(code);
+        alert('Key copied: ' + code);
+      };
+    });
+  }
+
+  async function deleteKey(id) {
+    if (confirm('Delete this unused key?')) {
+      await fetch(`/api/admin/keys/${id}`, { method: 'DELETE' });
+      fetchKeys();
+    }
+  }
+
+  async function resetKey(id) {
+    if (confirm('Reset this key and make it usable again?')) {
+      await fetch(`/api/admin/keys/${id}/reset`, { method: 'POST' });
+      fetchKeys();
+    }
+  }
+
+  async function blockKey(id) {
+    if (confirm('Block this key so it cannot be used?')) {
+      await fetch(`/api/admin/keys/${id}/block`, { method: 'POST' });
+      fetchKeys();
+    }
+  }
+
+  // Users
+  async function fetchUsers() {
+    const res = await fetch('/api/admin/users');
+    const users = await res.json();
+    const tbody = document.getElementById('usersTableBody');
+    tbody.innerHTML = '';
+    for (const u of users) {
+      const row = tbody.insertRow();
+      row.insertCell(0).innerText = u.id;
+      row.insertCell(1).innerText = u.username;
+      const balanceCell = row.insertCell(2);
+      const deviceCell = row.insertCell(3);
+      const expiryCell = row.insertCell(4);
+      const adminCell = row.insertCell(5);
+      const actions = row.insertCell(6);
+      const isPrivileged = u.is_admin || u.is_owner;
+
+      if (isPrivileged && !currentUserRole.isOwner) {
+        balanceCell.innerText = u.balance;
+      } else {
+        balanceCell.innerHTML = `<input type="number" value="${u.balance}" id="bal_${u.id}" style="width:80px;"> <button onclick="updateBalance(${u.id})">Save</button>`;
+      }
+
+      deviceCell.innerText = u.device_limit;
+      expiryCell.innerText = u.key_expiry ? new Date(u.key_expiry).toLocaleDateString() : 'None';
+      adminCell.innerText = u.is_admin ? (u.is_owner ? 'Owner' : 'Admin') : 'User';
+
+      if (isPrivileged && !currentUserRole.isOwner) {
+        actions.innerHTML = '<span class="owner-note">Owner only</span>';
+        continue;
+      }
+
+      const resetBtn = document.createElement('button');
+      resetBtn.innerText = 'Reset Pass';
+      resetBtn.onclick = () => resetPassword(u.id);
+      actions.appendChild(resetBtn);
+
+      const deviceBtn = document.createElement('button');
+      deviceBtn.innerText = 'Add Device';
+      deviceBtn.onclick = () => addDevice(u.id, u.username);
+      actions.appendChild(deviceBtn);
+
+      if (!u.is_owner) {
+        const delBtn = document.createElement('button');
+        delBtn.innerText = 'Delete';
+        delBtn.className = 'danger-btn';
+        delBtn.onclick = () => deleteUser(u.id);
+        actions.appendChild(delBtn);
+      }
+      const devicesBtn = document.createElement('button');
+      devicesBtn.innerText = 'Devices';
+      devicesBtn.onclick = () => showDevices(u.id, u.username);
+      actions.appendChild(devicesBtn);
+    }
+  }
+
+  async function updateBalance(userId) {
+    const newBalance = document.getElementById(`bal_${userId}`).value;
+    await fetch(`/api/admin/users/${userId}/balance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ balance: parseInt(newBalance) })
+    });
+    alert('Balance updated');
+    fetchUsers();
+  }
+
+  async function resetPassword(userId) {
+    const newPass = prompt("Enter new password (min 4 chars)");
+    if (newPass && newPass.length >= 4) {
+      await fetch(`/api/admin/users/${userId}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: newPass })
+      });
+      alert('Password reset');
+    } else alert('Password too short');
+  }
+
+  async function deleteUser(id) {
+    if (confirm('Delete user?')) {
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchUsers();
+      else alert('Cannot delete admin unless owner');
+    }
+  }
+
+  async function showDevices(userId, username) {
+    const res = await fetch(`/api/admin/users/${userId}/devices`);
+    const devices = await res.json();
+    let msg = `Devices for ${username}:\n`;
+    devices.forEach(d => msg += `${d.device_id} (last: ${new Date(d.last_login).toLocaleString()})\n`);
+    alert(msg);
+  }
+
+  async function addDevice(userId, username) {
+    const deviceId = prompt(`Enter device ID to allow for ${username}`);
+    if (!deviceId) return;
+    const res = await fetch(`/api/admin/users/${userId}/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: deviceId.trim() })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      alert('Device added for login');
+      fetchUsers();
+    } else {
+      alert(data.error || 'Failed to add device');
+    }
+  }
+
+  // Generate keys
+  document.getElementById('genKeysBtn').onclick = async () => {
+    const balance = parseInt(document.getElementById('keyBalance').value);
+    const deviceLimit = parseInt(document.getElementById('keyDeviceLimit').value);
+    let expiryDays = parseInt(document.getElementById('keyExpiryDays').value);
+    if (isNaN(expiryDays)) expiryDays = null;
+    const quantity = parseInt(document.getElementById('keyQuantity').value) || 1;
+    const res = await fetch('/api/admin/generate-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ balance_amount: balance, device_limit: deviceLimit, expiry_days: expiryDays, quantity })
+    });
+    const data = await res.json();
+    if (data.success) {
+      const costMsg = data.unlimited ? " (Owner: free)" : ` (Your balance deducted by ${balance * quantity})`;
+      document.getElementById('genResult').innerHTML = `<span class="success">✅ Generated keys: ${data.keys.join(', ')}${costMsg}</span>`;
+      fetchKeys();
+      fetchMe(); // refresh admin balance
+    } else {
+      document.getElementById('genResult').innerHTML = `<span style="color:#ff8888">❌ ${data.error}</span>`;
+    }
+  };
+
+  // Add user
+  document.getElementById('addUserBtn').onclick = async () => {
+    const username = document.getElementById('newUsername').value;
+    const password = document.getElementById('newPassword').value;
+    const balance = parseInt(document.getElementById('newBalance').value);
+    const isAdmin = document.getElementById('newIsAdmin').checked;
+    if (!username || !password) return alert('Fill all');
+    const res = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, balance, is_admin: isAdmin })
+    });
+    if (res.ok) {
+      alert('User added');
+      fetchUsers();
+      if (isAdmin && currentUserRole.isOwner) loadAdminsForOwner();
+    } else alert('Error: username exists or insufficient rights');
+  };
+
+  // Owner specific actions
+  if (document.getElementById('createAdminBtn')) {
+    document.getElementById('createAdminBtn').onclick = async () => {
+      const username = document.getElementById('adminUsername').value;
+      const password = document.getElementById('adminPassword').value;
+      const balance = parseInt(document.getElementById('adminBalance').value);
+      if (!username || !password) return alert('Fill admin details');
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, balance, is_admin: true })
+      });
+      if (res.ok) {
+        alert('Admin created');
+        loadAdminsForOwner();
+        fetchUsers();
+      } else alert('Error');
+    };
+
+    document.getElementById('replenishAdminBtn').onclick = async () => {
+      const userId = document.getElementById('existingAdminSelect').value;
+      const amount = parseInt(document.getElementById('replenishAmount').value);
+      if (!userId || !amount) return alert('Select admin and amount');
+      await fetch('/api/owner/add-admin-balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, amount })
+      });
+      alert('Admin balance increased');
+      loadAdminsForOwner();
+    };
+
+    document.getElementById('removeAdminBtn').onclick = async () => {
+      const userId = document.getElementById('existingAdminSelect').value;
+      if (!userId) return alert('Select admin');
+      if (confirm('Demote this admin to normal user?')) {
+        await fetch('/api/owner/set-admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, isAdmin: false })
+        });
+        alert('Admin demoted');
+        loadAdminsForOwner();
+        fetchUsers();
+      }
+    };
+  }
+
+  document.getElementById('logoutBtn').onclick = async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login.html';
+  };
+
+  fetchMe();
+  fetchKeys();
+  fetchUsers();
+  setInterval(() => { fetchMe(); }, 30000);
+</script>
+</body>
+</html>
